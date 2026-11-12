@@ -3,12 +3,14 @@ class NoteGroup {
   final String name;
   final int createdAt;
   final int noteCount;
+  final bool pinned;
 
   const NoteGroup({
     this.id,
     required this.name,
     required this.createdAt,
     this.noteCount = 0,
+    this.pinned = false,
   });
 
   factory NoteGroup.fromMap(Map<String, Object?> m) => NoteGroup(
@@ -16,6 +18,7 @@ class NoteGroup {
         name: m['name'] as String,
         createdAt: m['created_at'] as int,
         noteCount: (m['note_count'] as int?) ?? 0,
+        pinned: ((m['pinned'] as int?) ?? 0) == 1,
       );
 }
 
@@ -28,6 +31,8 @@ class Note {
   final int updatedAt;
   final String? groupName; // solo se llena en búsquedas
   final int imageCount;
+  final bool pinned;
+  final int color; // índice en noteSeeds (0 = sin color)
 
   const Note({
     this.id,
@@ -38,6 +43,8 @@ class Note {
     required this.updatedAt,
     this.groupName,
     this.imageCount = 0,
+    this.pinned = false,
+    this.color = 0,
   });
 
   factory Note.fromMap(Map<String, Object?> m) => Note(
@@ -49,6 +56,8 @@ class Note {
         updatedAt: m['updated_at'] as int,
         groupName: m['group_name'] as String?,
         imageCount: (m['image_count'] as int?) ?? 0,
+        pinned: ((m['pinned'] as int?) ?? 0) == 1,
+        color: (m['color'] as int?) ?? 0,
       );
 
   String get displayTitle => title.isEmpty ? 'Sin título' : title;

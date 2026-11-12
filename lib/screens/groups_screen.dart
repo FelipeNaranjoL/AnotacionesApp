@@ -47,6 +47,11 @@ class _GroupsScreenState extends State<GroupsScreen> {
     _load();
   }
 
+  Future<void> _togglePin(NoteGroup g) async {
+    await _db.setGroupPinned(g.id!, !g.pinned);
+    _load();
+  }
+
   Future<void> _delete(NoteGroup g) async {
     final ok = await confirmDialog(
       context,
@@ -71,11 +76,23 @@ class _GroupsScreenState extends State<GroupsScreen> {
     _load();
   }
 
+  void _onMenu(String action, NoteGroup g) {
+    switch (action) {
+      case 'pin':
+        _togglePin(g);
+      case 'rename':
+        _rename(g);
+      case 'delete':
+        _delete(g);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mis grupos'),
+        title: const Text('Mis Notas'),
         actions: [
           IconButton(
             tooltip: 'Buscar',
@@ -102,18 +119,31 @@ class _GroupsScreenState extends State<GroupsScreen> {
                   itemBuilder: (_, i) {
                     final g = _groups[i];
                     return ListTile(
-                      leading: const CircleAvatar(child: Icon(Icons.folder)),
+                      leading: CircleAvatar(
+                        backgroundColor:
+                            g.pinned ? scheme.primary : scheme.primaryContainer,
+                        foregroundColor: g.pinned
+                            ? scheme.onPrimary
+                            : scheme.onPrimaryContainer,
+                        child: Icon(g.pinned ? Icons.push_pin : Icons.folder),
+                      ),
                       title: Text(g.name),
                       subtitle: Text(g.noteCount == 1
                           ? '1 anotación'
                           : '${g.noteCount} anotaciones'),
                       onTap: () => _open(g),
+                      onLongPress: () => _togglePin(g),
                       trailing: PopupMenuButton<String>(
-                        onSelected: (v) =>
-                            v == 'rename' ? _rename(g) : _delete(g),
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(value: 'rename', child: Text('Renombrar')),
-                          PopupMenuItem(value: 'delete', child: Text('Eliminar')),
+                        onSelected: (v) => _onMenu(v, g),
+                        itemBuilder: (_) => [
+                          PopupMenuItem(
+                            value: 'pin',
+                            child: Text(g.pinned ? 'Desfijar' : 'Fijar'),
+                          ),
+                          const PopupMenuItem(
+                              value: 'rename', child: Text('Renombrar')),
+                          const PopupMenuItem(
+                              value: 'delete', child: Text('Eliminar')),
                         ],
                       ),
                     );

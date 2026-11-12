@@ -7,6 +7,8 @@ class DatabaseHelper {
   DatabaseHelper._();
   static final DatabaseHelper instance = DatabaseHelper._();
 
+  static const int _dbVersion = 3;
+
   Database? _db;
 
   Future<Database> get database async => _db ??= await _open();
@@ -15,16 +17,31 @@ class DatabaseHelper {
     final path = p.join(await getDatabasesPath(), 'notas.db');
     return openDatabase(
       path,
-      version: 1,
+      version: _dbVersion,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // v1 -> v2: notas fijadas y color.
+        if (oldVersion < 2) {
+          await db.execute(
+              'ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+          await db.execute(
+              'ALTER TABLE notes ADD COLUMN color INTEGER NOT NULL DEFAULT 0');
+        }
+        // v2 -> v3: grupos fijados.
+        if (oldVersion < 3) {
+          await db.execute(
+              'ALTER TABLE groups ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE groups(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('''
@@ -35,6 +52,8 @@ class DatabaseHelper {
             content TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            color INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
           )
         ''');
@@ -61,7 +80,7 @@ class DatabaseHelper {
       SELECT g.*,
         (SELECT COUNT(*) FROM notes n WHERE n.group_id = g.id) AS note_count
       FROM groups g
-      ORDER BY g.name COLLATE NOCASE
+      ORDER BY g.pinned DESC, g.name COLLATE NOCASE
     ''');
     return rows.map(NoteGroup.fromMap).toList();
   }
@@ -71,12 +90,19 @@ class DatabaseHelper {
     await db.insert('groups', {
       'name': name,
       'created_at': DateTime.now().millisecondsSinceEpoch,
+      'pinned': 0,
     });
   }
 
   Future<void> renameGroup(int id, String name) async {
     final db = await database;
     await db.update('groups', {'name': name}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> setGroupPinned(int id, bool pinned) async {
+    final db = await database;
+    await db.update('groups', {'pinned': pinned ? 1 : 0},
+        where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> deleteGroup(int id) async {
@@ -100,7 +126,7 @@ class DatabaseHelper {
         (SELECT COUNT(*) FROM note_images i WHERE i.note_id = n.id) AS image_count
       FROM notes n
       WHERE n.group_id = ?
-      ORDER BY n.updated_at DESC
+      ORDER BY n.pinned DESC, n.updated_at DESC
     ''', [groupId]);
     return rows.map(Note.fromMap).toList();
   }
@@ -116,7 +142,7 @@ class DatabaseHelper {
       FROM notes n
       JOIN groups g ON g.id = n.group_id
       WHERE n.title LIKE ? OR n.content LIKE ? OR g.name LIKE ?
-      ORDER BY n.updated_at DESC
+      ORDER BY n.pinned DESC, n.updated_at DESC
     ''', [like, like, like]);
     return rows.map(Note.fromMap).toList();
   }
@@ -126,6 +152,13 @@ class DatabaseHelper {
     final rows = await db.query('note_images',
         where: 'note_id = ?', whereArgs: [noteId], orderBy: 'id');
     return rows.map((r) => r['path'] as String).toList();
+  }
+
+  /// Fija o desfija una nota sin alterar su fecha de edición.
+  Future<void> setNotePinned(int id, bool pinned) async {
+    final db = await database;
+    await db.update('notes', {'pinned': pinned ? 1 : 0},
+        where: 'id = ?', whereArgs: [id]);
   }
 
   /// Inserta o actualiza la nota y reemplaza sus imágenes. Devuelve el id.
@@ -141,12 +174,20 @@ class DatabaseHelper {
           'content': note.content,
           'created_at': now,
           'updated_at': now,
+          'pinned': note.pinned ? 1 : 0,
+          'color': note.color,
         });
       } else {
         id = note.id!;
         await txn.update(
           'notes',
-          {'title': note.title, 'content': note.content, 'updated_at': now},
+          {
+            'title': note.title,
+            'content': note.content,
+            'updated_at': now,
+            'pinned': note.pinned ? 1 : 0,
+            'color': note.color,
+          },
           where: 'id = ?',
           whereArgs: [id],
         );

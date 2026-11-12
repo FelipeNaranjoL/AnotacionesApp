@@ -75,16 +75,27 @@ class _SearchScreenState extends State<SearchScreen> {
                   itemBuilder: (_, i) {
                     final n = _results[i];
                     return ListTile(
-                      title: Text(n.displayTitle,
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      title: Row(
+                        children: [
+                          if (n.pinned) ...[
+                            const Icon(Icons.push_pin, size: 16),
+                            const SizedBox(width: 6),
+                          ],
+                          Expanded(
+                            child: Text(n.displayTitle,
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                        ],
+                      ),
                       subtitle: Text(
                         '${n.groupName ?? ''}'
                         '${n.content.isEmpty ? '' : '  •  ${n.content}'}',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      trailing:
-                          n.imageCount > 0 ? const Icon(Icons.image, size: 18) : null,
+                      trailing: n.imageCount > 0
+                          ? const Icon(Icons.image, size: 18)
+                          : null,
                       onTap: () => _open(n),
                     );
                   },

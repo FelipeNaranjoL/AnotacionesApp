@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import '../data/database_helper.dart';
 import '../data/image_storage.dart';
 import '../models/models.dart';
+import '../utils/note_colors.dart';
 import '../widgets/dialogs.dart';
 import 'image_viewer_screen.dart';
 
@@ -23,6 +24,17 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   late final TextEditingController _content;
   late final Future<void> _imagesFuture;
 
+  // Deshacer / rehacer: un historial por campo.
+  // Los botones actúan sobre el último campo que tuvo el foco.
+  final _titleUndo = UndoHistoryController();
+  final _contentUndo = UndoHistoryController();
+  final _titleFocus = FocusNode();
+  final _contentFocus = FocusNode();
+  bool _titleActive = false;
+
+  late bool _pinned;
+  late int _color;
+
   final List<String> _images = [];
   final Set<String> _newPaths = {}; // copiadas en esta sesión
   final Set<String> _removed = {}; // existentes que el usuario quitó
@@ -33,7 +45,20 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     super.initState();
     _title = TextEditingController(text: widget.note?.title ?? '');
     _content = TextEditingController(text: widget.note?.content ?? '');
+    _pinned = widget.note?.pinned ?? false;
+    _color = widget.note?.color ?? 0;
     _imagesFuture = widget.note?.id == null ? Future.value() : _loadImages();
+
+    _titleFocus.addListener(() {
+      if (_titleFocus.hasFocus && !_titleActive) {
+        setState(() => _titleActive = true);
+      }
+    });
+    _contentFocus.addListener(() {
+      if (_contentFocus.hasFocus && _titleActive) {
+        setState(() => _titleActive = false);
+      }
+    });
   }
 
   Future<void> _loadImages() async {
@@ -46,6 +71,10 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   void dispose() {
     _title.dispose();
     _content.dispose();
+    _titleUndo.dispose();
+    _contentUndo.dispose();
+    _titleFocus.dispose();
+    _contentFocus.dispose();
     super.dispose();
   }
 
@@ -69,6 +98,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
           content: content,
           createdAt: 0,
           updatedAt: 0,
+          pinned: _pinned,
+          color: _color,
         ),
         _images,
       );
@@ -89,6 +120,48 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     await ImageStorage.deleteFiles(_newPaths);
     await _db.deleteNote(widget.note!.id!);
     if (mounted) Navigator.pop(context, true);
+  }
+
+  Future<void> _pickColor() async {
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Wrap(
+            spacing: 14,
+            runSpacing: 14,
+            children: List.generate(noteSeeds.length, (i) {
+              final selected = i == _color;
+              final seed = noteSeed(i);
+              return GestureDetector(
+                onTap: () => Navigator.pop(ctx, i),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: seed ?? Theme.of(ctx).colorScheme.surface,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: selected
+                          ? Theme.of(ctx).colorScheme.primary
+                          : Theme.of(ctx).colorScheme.outlineVariant,
+                      width: selected ? 3 : 1,
+                    ),
+                  ),
+                  child: i == 0
+                      ? const Icon(Icons.format_color_reset, size: 20)
+                      : selected
+                          ? const Icon(Icons.check, color: Colors.black87)
+                          : null,
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+    if (picked != null) setState(() => _color = picked);
   }
 
   Future<void> _addImage() async {
@@ -127,8 +200,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('No se pudo agregar la imagen: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo agregar la imagen: $e')));
     }
   }
 
@@ -141,23 +214,59 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     }
   }
 
+  Widget _undoRedoButtons() {
+    return ListenableBuilder(
+      listenable: Listenable.merge([_titleUndo, _contentUndo]),
+      builder: (context, _) {
+        final c = _titleActive ? _titleUndo : _contentUndo;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Deshacer',
+              icon: const Icon(Icons.undo),
+              onPressed: c.value.canUndo ? c.undo : null,
+            ),
+            IconButton(
+              tooltip: 'Rehacer',
+              icon: const Icon(Icons.redo),
+              onPressed: c.value.canRedo ? c.redo : null,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final bg = noteSurface(context, _color);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _saveAndClose();
       },
       child: Scaffold(
+        backgroundColor: bg,
         appBar: AppBar(
+          backgroundColor: bg,
+          scrolledUnderElevation: 0,
           title: Text(widget.note == null ? 'Nueva nota' : 'Editar nota'),
           actions: [
-            if (widget.note != null)
-              IconButton(
-                tooltip: 'Eliminar',
-                icon: const Icon(Icons.delete_outline),
-                onPressed: _delete,
-              ),
+            _undoRedoButtons(),
+            IconButton(
+              tooltip: _pinned ? 'Quitar de fijadas' : 'Fijar nota',
+              icon: Icon(_pinned ? Icons.push_pin : Icons.push_pin_outlined),
+              onPressed: () => setState(() => _pinned = !_pinned),
+            ),
+            PopupMenuButton<String>(
+              onSelected: (v) => v == 'color' ? _pickColor() : _delete(),
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'color', child: Text('Color')),
+                if (widget.note != null)
+                  const PopupMenuItem(value: 'delete', child: Text('Eliminar')),
+              ],
+            ),
           ],
         ),
         body: ListView(
@@ -165,6 +274,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
           children: [
             TextField(
               controller: _title,
+              focusNode: _titleFocus,
+              undoController: _titleUndo,
               textCapitalization: TextCapitalization.sentences,
               style: Theme.of(context).textTheme.headlineSmall,
               decoration: const InputDecoration(
@@ -172,8 +283,18 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                 border: InputBorder.none,
               ),
             ),
+            if (widget.note != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  'Editado ${formatDate(widget.note!.updatedAt)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
             TextField(
               controller: _content,
+              focusNode: _contentFocus,
+              undoController: _contentUndo,
               textCapitalization: TextCapitalization.sentences,
               keyboardType: TextInputType.multiline,
               minLines: 8,
